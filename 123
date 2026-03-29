@@ -1,0 +1,288 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local ESPObjects = {}
+local Highlights = {}
+
+local infiniteSprint = false
+local sprintConn = nil
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local char = workspace.PLAYERS.ALIVE:FindFirstChild(LocalPlayer.Name)
+        if char then
+            char:SetAttribute("Stamina", 100)
+        end
+    end)
+end)
+
+local function WorldToScreen(position)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(position)
+    return Vector2.new(screenPos.X, screenPos.Y), onScreen, screenPos.Z
+end
+
+local function AddHighlight(instance, color)
+    if Highlights[instance] then return end
+    local hl = Instance.new("Highlight")
+    hl.Adornee = instance
+    hl.FillColor = color
+    hl.OutlineColor = color
+    hl.FillTransparency = 0.85
+    hl.OutlineTransparency = 0.3
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = game:GetService("CoreGui")
+    Highlights[instance] = hl
+end
+
+local function RemoveHighlight(instance)
+    if Highlights[instance] then
+        Highlights[instance]:Destroy()
+        Highlights[instance] = nil
+    end
+end
+
+local function CreateESPText()
+    local text = Drawing.new("Text")
+    text.Visible = false
+    text.Center = true
+    text.Outline = true
+    text.Font = 2
+    text.Size = 16
+    return text
+end
+
+local function GetRootPart(model)
+    return model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or model:FindFirstChildWhichIsA("BasePart")
+end
+
+RunService.RenderStepped:Connect(function()
+    for _, obj in pairs(ESPObjects) do
+        obj.Visible = false
+    end
+
+    local playersFolder = workspace:FindFirstChild("PLAYERS")
+    local aliveFolder = playersFolder and playersFolder:FindFirstChild("ALIVE")
+    if aliveFolder then
+        for _, model in ipairs(aliveFolder:GetChildren()) do
+            if model:IsA("Model") and model.Name ~= LocalPlayer.Name then
+                AddHighlight(model, Color3.fromRGB(0, 255, 0))
+                local root = GetRootPart(model)
+                if root then
+                    local posTop, onScreenTop, depthTop = WorldToScreen(root.Position + Vector3.new(0, 3.5, 0))
+                    local posBot, onScreenBot, depthBot = WorldToScreen(root.Position + Vector3.new(0, -3, 0))
+
+                    local keyName = "alive_name_" .. model.Name
+                    if not ESPObjects[keyName] then
+                        ESPObjects[keyName] = CreateESPText()
+                    end
+                    if onScreenTop and depthTop > 0 then
+                        ESPObjects[keyName].Position = posTop
+                        ESPObjects[keyName].Text = model.Name
+                        ESPObjects[keyName].Color = Color3.fromRGB(255, 255, 255)
+                        ESPObjects[keyName].Visible = true
+                    end
+
+                    local keyHP = "alive_hp_" .. model.Name
+                    if not ESPObjects[keyHP] then
+                        ESPObjects[keyHP] = CreateESPText()
+                        ESPObjects[keyHP].Size = 14
+                    end
+                    if onScreenBot and depthBot > 0 then
+                        local hp = "?"
+                        local maxhp = "?"
+                        local hum = model:FindFirstChildOfClass("Humanoid")
+                        if hum then
+                            hp = math.floor(hum.Health)
+                            maxhp = math.floor(hum.MaxHealth)
+                        end
+                        ESPObjects[keyHP].Position = posBot
+                        ESPObjects[keyHP].Text = tostring(hp) .. " / " .. tostring(maxhp)
+                        ESPObjects[keyHP].Color = Color3.fromRGB(255, 255, 255)
+                        ESPObjects[keyHP].Visible = true
+                    end
+                end
+            end
+        end
+    end
+
+    local killerFolder = playersFolder and playersFolder:FindFirstChild("KILLER")
+    if killerFolder then
+        for _, model in ipairs(killerFolder:GetChildren()) do
+            if model:IsA("Model") and model.Name ~= LocalPlayer.Name then
+                AddHighlight(model, Color3.fromRGB(255, 0, 0))
+                local root = GetRootPart(model)
+                if root then
+                    local posTop, onScreenTop, depthTop = WorldToScreen(root.Position + Vector3.new(0, 3.5, 0))
+                    local posBot, onScreenBot, depthBot = WorldToScreen(root.Position + Vector3.new(0, -3, 0))
+
+                    local keyName = "killer_name_" .. model.Name
+                    if not ESPObjects[keyName] then
+                        ESPObjects[keyName] = CreateESPText()
+                    end
+                    if onScreenTop and depthTop > 0 then
+                        ESPObjects[keyName].Position = posTop
+                        ESPObjects[keyName].Text = "[KILLER] " .. model.Name
+                        ESPObjects[keyName].Color = Color3.fromRGB(255, 60, 60)
+                        ESPObjects[keyName].Visible = true
+                    end
+
+                    local keyHP = "killer_hp_" .. model.Name
+                    if not ESPObjects[keyHP] then
+                        ESPObjects[keyHP] = CreateESPText()
+                        ESPObjects[keyHP].Size = 14
+                    end
+                    if onScreenBot and depthBot > 0 then
+                        local hp = "?"
+                        local maxhp = "?"
+                        local hum = model:FindFirstChildOfClass("Humanoid")
+                        if hum then
+                            hp = math.floor(hum.Health)
+                            maxhp = math.floor(hum.MaxHealth)
+                        end
+                        ESPObjects[keyHP].Position = posBot
+                        ESPObjects[keyHP].Text = tostring(hp) .. " / " .. tostring(maxhp)
+                        ESPObjects[keyHP].Color = Color3.fromRGB(255, 255, 255)
+                        ESPObjects[keyHP].Visible = true
+                    end
+                end
+            end
+        end
+    end
+
+    local mapsFolder = workspace:FindFirstChild("MAPS")
+    local gameMap = mapsFolder and mapsFolder:FindFirstChild("GAME MAP")
+    local doorsFolder = gameMap and gameMap:FindFirstChild("Doors")
+    if doorsFolder then
+        for _, obj in ipairs(doorsFolder:GetDescendants()) do
+            if obj:IsA("Model") or obj:IsA("BasePart") then
+                AddHighlight(obj, Color3.fromRGB(255, 255, 255))
+            end
+        end
+        for _, obj in ipairs(doorsFolder:GetChildren()) do
+            if obj:IsA("Model") or obj:IsA("BasePart") then
+                AddHighlight(obj, Color3.fromRGB(255, 255, 255))
+            end
+        end
+    end
+
+    local doubleDoors = gameMap and gameMap:FindFirstChild("Double Doors")
+    if doubleDoors then
+        for _, obj in ipairs(doubleDoors:GetChildren()) do
+            if obj:IsA("Model") or obj:IsA("BasePart") then
+                AddHighlight(obj, Color3.fromRGB(255, 255, 255))
+                for _, sub in ipairs(obj:GetDescendants()) do
+                    if sub:IsA("Model") or sub:IsA("BasePart") then
+                        AddHighlight(sub, Color3.fromRGB(255, 255, 255))
+                    end
+                end
+            end
+        end
+    end
+
+    local escapesFolder = gameMap and gameMap:FindFirstChild("Escapes")
+    if escapesFolder then
+        for _, obj in ipairs(escapesFolder:GetDescendants()) do
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                AddHighlight(obj, Color3.fromRGB(255, 0, 0))
+            end
+        end
+        for _, obj in ipairs(escapesFolder:GetChildren()) do
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                AddHighlight(obj, Color3.fromRGB(255, 0, 0))
+            end
+        end
+    end
+
+    local gensFolder = gameMap and gameMap:FindFirstChild("Generators")
+    if gensFolder then
+        for i, gen in ipairs(gensFolder:GetChildren()) do
+            if gen:IsA("Model") then
+                AddHighlight(gen, Color3.fromRGB(170, 0, 255))
+                local part = GetRootPart(gen)
+                if part then
+                    local pos, onScreen, depth = WorldToScreen(part.Position + Vector3.new(0, 5, 0))
+                    local key = "gen_" .. tostring(i)
+                    if not ESPObjects[key] then
+                        ESPObjects[key] = CreateESPText()
+                    end
+                    if onScreen and depth > 0 then
+                        local progress = gen:GetAttribute("Progress") or 0
+                        ESPObjects[key].Position = pos
+                        ESPObjects[key].Text = "Generator " .. tostring(math.floor(progress)) .. "%"
+                        ESPObjects[key].Color = Color3.fromRGB(170, 0, 255)
+                        ESPObjects[key].Visible = true
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local function WatchFolder(folder)
+    if not folder then return end
+    folder.ChildRemoved:Connect(function(child)
+        RemoveHighlight(child)
+        for _, desc in ipairs(child:GetDescendants()) do
+            RemoveHighlight(desc)
+        end
+        for key, obj in pairs(ESPObjects) do
+            if string.find(key, child.Name) then
+                obj.Visible = false
+                obj:Remove()
+                ESPObjects[key] = nil
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    local pf = workspace:WaitForChild("PLAYERS", 30)
+    if pf then
+        WatchFolder(pf:FindFirstChild("ALIVE"))
+        WatchFolder(pf:FindFirstChild("KILLER"))
+        pf.ChildAdded:Connect(function(c)
+            WatchFolder(c)
+        end)
+    end
+end)
+
+maintab:Toggle("Infinite Sprint", "Allows You To Sprint Forever.", function(state)
+    infiniteSprint = state
+
+    if state then
+        if sprintConn then sprintConn:Disconnect() end
+        sprintConn = RunService.Heartbeat:Connect(function()
+            if not infiniteSprint then return end
+            local char = LocalPlayer.Character
+            if not char then return end
+
+            if isMobile then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.MoveDirection.Magnitude > 0 then
+                    char:SetAttribute("WalkSpeed", 24)
+                else
+                    char:SetAttribute("WalkSpeed", 12)
+                end
+            else
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+                    char:SetAttribute("WalkSpeed", 25)
+                else
+                    char:SetAttribute("WalkSpeed", 12)
+                end
+            end
+        end)
+    else
+        if sprintConn then
+            sprintConn:Disconnect()
+            sprintConn = nil
+        end
+        local char = LocalPlayer.Character
+        if char then
+            char:SetAttribute("WalkSpeed", 12)
+        end
+    end
+end)
