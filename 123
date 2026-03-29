@@ -26,7 +26,11 @@ local function WorldToScreen(position)
 end
 
 local function AddHighlight(instance, color)
-    if Highlights[instance] then return end
+    if Highlights[instance] and Highlights[instance].Parent then return end
+    if Highlights[instance] then
+        Highlights[instance]:Destroy()
+        Highlights[instance] = nil
+    end
     local hl = Instance.new("Highlight")
     hl.Adornee = instance
     hl.FillColor = color
