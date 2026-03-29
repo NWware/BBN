@@ -12,8 +12,6 @@ local infiniteSprint = false
 local sprintConn = nil
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
--- === УТИЛИТЫ ===
-
 local function DisconnectAll()
     for key, conn in pairs(Connections) do
         if typeof(conn) == "RBXScriptConnection" then
@@ -57,14 +55,12 @@ local function AddHighlight(instance, color)
     local existing = Highlights[instance]
     if existing then
         if existing.Parent then
-            -- Обновить цвет если изменился
             if existing.FillColor ~= color then
                 existing.FillColor = color
                 existing.OutlineColor = color
             end
             return
         else
-            -- Хайлайт был уничтожен извне
             Highlights[instance] = nil
         end
     end
@@ -125,34 +121,32 @@ local function CleanESPByPattern(pattern)
     end
 end
 
--- === БЕСКОНЕЧНАЯ СТАМИНА ===
+local function FindMyCharacter()
+    local playersFolder = workspace:FindFirstChild("PLAYERS")
+    if not playersFolder then return nil end
+    local aliveFolder = playersFolder:FindFirstChild("ALIVE")
+    if aliveFolder then
+        local char = aliveFolder:FindFirstChild(LocalPlayer.Name)
+        if char then return char end
+    end
+    local killerFolder = playersFolder:FindFirstChild("KILLER")
+    if killerFolder then
+        local char = killerFolder:FindFirstChild(LocalPlayer.Name)
+        if char then return char end
+    end
+    return nil
+end
 
 RunService.Heartbeat:Connect(function()
     pcall(function()
-        local playersFolder = workspace:FindFirstChild("PLAYERS")
-        if not playersFolder then return end
-
-        local aliveFolder = playersFolder:FindFirstChild("ALIVE")
-        if aliveFolder then
-            local char = aliveFolder:FindFirstChild(LocalPlayer.Name)
-            if char then
-                char:SetAttribute("Stamina", 100)
-                return
-            end
-        end
-
-        local killerFolder = playersFolder:FindFirstChild("KILLER")
-        if killerFolder then
-            local char = killerFolder:FindFirstChild(LocalPlayer.Name)
-            if char then
-                char:SetAttribute("Stamina", 100)
-                return
-            end
+        local char = FindMyCharacter()
+        if char then
+            char:SetAttribute("Stamina", 9999999)
+            char:SetAttribute("MaxStamina", 9999999)
         end
     end)
 end)
 
--- === ОТСЛЕЖИВАНИЕ УДАЛЕНИЯ ===
 
 local function WatchFolder(folder, prefix)
     if not folder then return end
@@ -180,7 +174,6 @@ local function WatchFolder(folder, prefix)
     end
 
     Connections[addKey] = folder.ChildAdded:Connect(function(child)
-        -- Новые объекты подхватятся в RenderStepped автоматически
     end)
 end
 
@@ -220,7 +213,6 @@ local function WatchGameMap(gameMap)
     setupEscapes()
     setupGenerators()
 
-    -- Отслеживаем появление папок внутри карты (Doors, Generators и т.д.)
     local mapChildConn = "gamemap_childadded"
     if Connections[mapChildConn] then
         Connections[mapChildConn]:Disconnect()
@@ -234,7 +226,6 @@ local function WatchGameMap(gameMap)
         end
     end)
 
-    -- Когда карта удаляется — чистим всё
     local mapRemovedConn = "gamemap_removed"
     if Connections[mapRemovedConn] then
         Connections[mapRemovedConn]:Disconnect()
@@ -271,7 +262,6 @@ local function InitWatchers()
             end
         end)
 
-        -- Когда ALIVE/KILLER удаляется — чистим соответствующие хайлайты
         local function watchFolderRemoval(folderName, prefix)
             local folder = pf:FindFirstChild(folderName)
             if folder then
@@ -316,12 +306,11 @@ local function InitWatchers()
         Connections[mapsConn] = mapsFolder.ChildAdded:Connect(function(child)
             task.wait(0.5)
             if child.Name == "GAME MAP" then
-                ClearEverything() -- Очистка старых хайлайтов перед новой каткой
+                ClearEverything()
                 WatchGameMap(child)
             end
         end)
 
-        -- Когда GAME MAP удаляется
         local mapsRemConn = "maps_childremoved"
         if Connections[mapsRemConn] then Connections[mapsRemConn]:Disconnect() end
         Connections[mapsRemConn] = mapsFolder.ChildRemoved:Connect(function(child)
@@ -334,10 +323,7 @@ end
 
 InitWatchers()
 
--- === ОСНОВНОЙ РЕНДЕР ===
-
 RunService.RenderStepped:Connect(function()
-    -- Скрываем все ESP текстовые объекты, затем показываем актуальные
     for _, obj in pairs(ESPObjects) do
         obj.Visible = false
     end
@@ -496,20 +482,7 @@ maintab:Toggle("Infinite Sprint", "Allows You To Sprint Forever.", function(stat
         sprintConn = RunService.Heartbeat:Connect(function()
             if not infiniteSprint then return end
             pcall(function()
-                local playersFolder = workspace:FindFirstChild("PLAYERS")
-                if not playersFolder then return end
-
-                local char = nil
-                local aliveFolder = playersFolder:FindFirstChild("ALIVE")
-                if aliveFolder then
-                    char = aliveFolder:FindFirstChild(LocalPlayer.Name)
-                end
-                if not char then
-                    local killerFolder = playersFolder:FindFirstChild("KILLER")
-                    if killerFolder then
-                        char = killerFolder:FindFirstChild(LocalPlayer.Name)
-                    end
-                end
+                local char = FindMyCharacter()
                 if not char then return end
 
                 if isMobile then
@@ -534,18 +507,9 @@ maintab:Toggle("Infinite Sprint", "Allows You To Sprint Forever.", function(stat
             sprintConn = nil
         end
         pcall(function()
-            local playersFolder = workspace:FindFirstChild("PLAYERS")
-            if playersFolder then
-                local aliveFolder = playersFolder:FindFirstChild("ALIVE")
-                if aliveFolder then
-                    local char = aliveFolder:FindFirstChild(LocalPlayer.Name)
-                    if char then char:SetAttribute("WalkSpeed", 12) end
-                end
-                local killerFolder = playersFolder:FindFirstChild("KILLER")
-                if killerFolder then
-                    local char = killerFolder:FindFirstChild(LocalPlayer.Name)
-                    if char then char:SetAttribute("WalkSpeed", 12) end
-                end
+            local char = FindMyCharacter()
+            if char then
+                char:SetAttribute("WalkSpeed", 12)
             end
         end)
     end
