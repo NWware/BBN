@@ -6,19 +6,46 @@ local LocalPlayer = Players.LocalPlayer
 
 local ESPObjects = {}
 local Highlights = {}
+local Connections = {}
 
 local infiniteSprint = false
 local sprintConn = nil
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
-RunService.Heartbeat:Connect(function()
-    pcall(function()
-        local char = workspace.PLAYERS.ALIVE:FindFirstChild(LocalPlayer.Name)
-        if char then
-            char:SetAttribute("Stamina", 100)
+-- === УТИЛИТЫ ===
+
+local function DisconnectAll()
+    for key, conn in pairs(Connections) do
+        if typeof(conn) == "RBXScriptConnection" then
+            conn:Disconnect()
         end
-    end)
-end)
+        Connections[key] = nil
+    end
+end
+
+local function ClearAllHighlights()
+    for instance, hl in pairs(Highlights) do
+        pcall(function()
+            hl:Destroy()
+        end)
+        Highlights[instance] = nil
+    end
+end
+
+local function ClearAllESP()
+    for key, obj in pairs(ESPObjects) do
+        pcall(function()
+            obj.Visible = false
+            obj:Remove()
+        end)
+        ESPObjects[key] = nil
+    end
+end
+
+local function ClearEverything()
+    ClearAllHighlights()
+    ClearAllESP()
+end
 
 local function WorldToScreen(position)
     local screenPos, onScreen = Camera:WorldToViewportPoint(position)
@@ -26,10 +53,20 @@ local function WorldToScreen(position)
 end
 
 local function AddHighlight(instance, color)
-    if Highlights[instance] and Highlights[instance].Parent then return end
-    if Highlights[instance] then
-        Highlights[instance]:Destroy()
-        Highlights[instance] = nil
+    if not instance or not instance.Parent then return end
+    local existing = Highlights[instance]
+    if existing then
+        if existing.Parent then
+            -- Обновить цвет если изменился
+            if existing.FillColor ~= color then
+                existing.FillColor = color
+                existing.OutlineColor = color
+            end
+            return
+        else
+            -- Хайлайт был уничтожен извне
+            Highlights[instance] = nil
+        end
     end
     local hl = Instance.new("Highlight")
     hl.Adornee = instance
@@ -44,8 +81,19 @@ end
 
 local function RemoveHighlight(instance)
     if Highlights[instance] then
-        Highlights[instance]:Destroy()
+        pcall(function()
+            Highlights[instance]:Destroy()
+        end)
         Highlights[instance] = nil
+    end
+end
+
+local function RemoveHighlightRecursive(instance)
+    RemoveHighlight(instance)
+    if instance:IsA("Model") or instance:IsA("Folder") then
+        for _, desc in ipairs(instance:GetDescendants()) do
+            RemoveHighlight(desc)
+        end
     end
 end
 
@@ -60,10 +108,236 @@ local function CreateESPText()
 end
 
 local function GetRootPart(model)
-    return model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or model:FindFirstChildWhichIsA("BasePart")
+    return model:FindFirstChild("HumanoidRootPart")
+        or model:FindFirstChild("Head")
+        or model:FindFirstChildWhichIsA("BasePart")
 end
 
+local function CleanESPByPattern(pattern)
+    for key, obj in pairs(ESPObjects) do
+        if string.find(key, pattern) then
+            pcall(function()
+                obj.Visible = false
+                obj:Remove()
+            end)
+            ESPObjects[key] = nil
+        end
+    end
+end
+
+-- === БЕСКОНЕЧНАЯ СТАМИНА ===
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local playersFolder = workspace:FindFirstChild("PLAYERS")
+        if not playersFolder then return end
+
+        local aliveFolder = playersFolder:FindFirstChild("ALIVE")
+        if aliveFolder then
+            local char = aliveFolder:FindFirstChild(LocalPlayer.Name)
+            if char then
+                char:SetAttribute("Stamina", 100)
+                return
+            end
+        end
+
+        local killerFolder = playersFolder:FindFirstChild("KILLER")
+        if killerFolder then
+            local char = killerFolder:FindFirstChild(LocalPlayer.Name)
+            if char then
+                char:SetAttribute("Stamina", 100)
+                return
+            end
+        end
+    end)
+end)
+
+-- === ОТСЛЕЖИВАНИЕ УДАЛЕНИЯ ===
+
+local function WatchFolder(folder, prefix)
+    if not folder then return end
+    local connKey = prefix .. "_" .. folder.Name .. "_removed"
+    if Connections[connKey] then
+        Connections[connKey]:Disconnect()
+    end
+
+    Connections[connKey] = folder.ChildRemoved:Connect(function(child)
+        RemoveHighlightRecursive(child)
+        for key, obj in pairs(ESPObjects) do
+            if string.find(key, child.Name) then
+                pcall(function()
+                    obj.Visible = false
+                    obj:Remove()
+                end)
+                ESPObjects[key] = nil
+            end
+        end
+    end)
+
+    local addKey = prefix .. "_" .. folder.Name .. "_added"
+    if Connections[addKey] then
+        Connections[addKey]:Disconnect()
+    end
+
+    Connections[addKey] = folder.ChildAdded:Connect(function(child)
+        -- Новые объекты подхватятся в RenderStepped автоматически
+    end)
+end
+
+local function WatchGameMap(gameMap)
+    if not gameMap then return end
+
+    local function setupDoors()
+        local doorsFolder = gameMap:FindFirstChild("Doors")
+        if doorsFolder then
+            WatchFolder(doorsFolder, "doors")
+        end
+    end
+
+    local function setupDoubleDoors()
+        local doubleDoors = gameMap:FindFirstChild("Double Doors")
+        if doubleDoors then
+            WatchFolder(doubleDoors, "doubledoors")
+        end
+    end
+
+    local function setupEscapes()
+        local escapesFolder = gameMap:FindFirstChild("Escapes")
+        if escapesFolder then
+            WatchFolder(escapesFolder, "escapes")
+        end
+    end
+
+    local function setupGenerators()
+        local gensFolder = gameMap:FindFirstChild("Generators")
+        if gensFolder then
+            WatchFolder(gensFolder, "generators")
+        end
+    end
+
+    setupDoors()
+    setupDoubleDoors()
+    setupEscapes()
+    setupGenerators()
+
+    -- Отслеживаем появление папок внутри карты (Doors, Generators и т.д.)
+    local mapChildConn = "gamemap_childadded"
+    if Connections[mapChildConn] then
+        Connections[mapChildConn]:Disconnect()
+    end
+    Connections[mapChildConn] = gameMap.ChildAdded:Connect(function(child)
+        task.wait(0.1)
+        if child.Name == "Doors" then setupDoors()
+        elseif child.Name == "Double Doors" then setupDoubleDoors()
+        elseif child.Name == "Escapes" then setupEscapes()
+        elseif child.Name == "Generators" then setupGenerators()
+        end
+    end)
+
+    -- Когда карта удаляется — чистим всё
+    local mapRemovedConn = "gamemap_removed"
+    if Connections[mapRemovedConn] then
+        Connections[mapRemovedConn]:Disconnect()
+    end
+    Connections[mapRemovedConn] = gameMap.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            ClearEverything()
+        end
+    end)
+end
+
+-- === ИНИЦИАЛИЗАЦИЯ ОТСЛЕЖИВАНИЯ ===
+
+local function InitWatchers()
+    task.spawn(function()
+        local pf = workspace:WaitForChild("PLAYERS", 30)
+        if not pf then return end
+
+        local function watchAliveKiller()
+            local alive = pf:FindFirstChild("ALIVE")
+            local killer = pf:FindFirstChild("KILLER")
+            WatchFolder(alive, "alive")
+            WatchFolder(killer, "killer")
+        end
+
+        watchAliveKiller()
+
+        local pfConn = "pf_childadded"
+        if Connections[pfConn] then Connections[pfConn]:Disconnect() end
+        Connections[pfConn] = pf.ChildAdded:Connect(function(child)
+            task.wait(0.1)
+            if child.Name == "ALIVE" or child.Name == "KILLER" then
+                WatchFolder(child, child.Name:lower())
+            end
+        end)
+
+        -- Когда ALIVE/KILLER удаляется — чистим соответствующие хайлайты
+        local function watchFolderRemoval(folderName, prefix)
+            local folder = pf:FindFirstChild(folderName)
+            if folder then
+                local key = prefix .. "_folder_destroyed"
+                if Connections[key] then Connections[key]:Disconnect() end
+                Connections[key] = folder.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        CleanESPByPattern(prefix)
+                    end
+                end)
+            end
+        end
+
+        watchFolderRemoval("ALIVE", "alive")
+        watchFolderRemoval("KILLER", "killer")
+
+        pf.ChildAdded:Connect(function(child)
+            task.wait(0.1)
+            if child.Name == "ALIVE" then
+                watchFolderRemoval("ALIVE", "alive")
+            elseif child.Name == "KILLER" then
+                watchFolderRemoval("KILLER", "killer")
+            end
+        end)
+    end)
+
+    task.spawn(function()
+        local mapsFolder = workspace:WaitForChild("MAPS", 30)
+        if not mapsFolder then return end
+
+        local function tryWatchGameMap()
+            local gm = mapsFolder:FindFirstChild("GAME MAP")
+            if gm then
+                WatchGameMap(gm)
+            end
+        end
+
+        tryWatchGameMap()
+
+        local mapsConn = "maps_childadded"
+        if Connections[mapsConn] then Connections[mapsConn]:Disconnect() end
+        Connections[mapsConn] = mapsFolder.ChildAdded:Connect(function(child)
+            task.wait(0.5)
+            if child.Name == "GAME MAP" then
+                ClearEverything() -- Очистка старых хайлайтов перед новой каткой
+                WatchGameMap(child)
+            end
+        end)
+
+        -- Когда GAME MAP удаляется
+        local mapsRemConn = "maps_childremoved"
+        if Connections[mapsRemConn] then Connections[mapsRemConn]:Disconnect() end
+        Connections[mapsRemConn] = mapsFolder.ChildRemoved:Connect(function(child)
+            if child.Name == "GAME MAP" then
+                ClearEverything()
+            end
+        end)
+    end)
+end
+
+InitWatchers()
+
+-- === ОСНОВНОЙ РЕНДЕР ===
+
 RunService.RenderStepped:Connect(function()
+    -- Скрываем все ESP текстовые объекты, затем показываем актуальные
     for _, obj in pairs(ESPObjects) do
         obj.Visible = false
     end
@@ -159,14 +433,10 @@ RunService.RenderStepped:Connect(function()
 
     local mapsFolder = workspace:FindFirstChild("MAPS")
     local gameMap = mapsFolder and mapsFolder:FindFirstChild("GAME MAP")
+
     local doorsFolder = gameMap and gameMap:FindFirstChild("Doors")
     if doorsFolder then
         for _, obj in ipairs(doorsFolder:GetDescendants()) do
-            if obj:IsA("Model") or obj:IsA("BasePart") then
-                AddHighlight(obj, Color3.fromRGB(255, 255, 255))
-            end
-        end
-        for _, obj in ipairs(doorsFolder:GetChildren()) do
             if obj:IsA("Model") or obj:IsA("BasePart") then
                 AddHighlight(obj, Color3.fromRGB(255, 255, 255))
             end
@@ -175,14 +445,9 @@ RunService.RenderStepped:Connect(function()
 
     local doubleDoors = gameMap and gameMap:FindFirstChild("Double Doors")
     if doubleDoors then
-        for _, obj in ipairs(doubleDoors:GetChildren()) do
+        for _, obj in ipairs(doubleDoors:GetDescendants()) do
             if obj:IsA("Model") or obj:IsA("BasePart") then
                 AddHighlight(obj, Color3.fromRGB(255, 255, 255))
-                for _, sub in ipairs(obj:GetDescendants()) do
-                    if sub:IsA("Model") or sub:IsA("BasePart") then
-                        AddHighlight(sub, Color3.fromRGB(255, 255, 255))
-                    end
-                end
             end
         end
     end
@@ -190,11 +455,6 @@ RunService.RenderStepped:Connect(function()
     local escapesFolder = gameMap and gameMap:FindFirstChild("Escapes")
     if escapesFolder then
         for _, obj in ipairs(escapesFolder:GetDescendants()) do
-            if obj:IsA("BasePart") or obj:IsA("Model") then
-                AddHighlight(obj, Color3.fromRGB(255, 0, 0))
-            end
-        end
-        for _, obj in ipairs(escapesFolder:GetChildren()) do
             if obj:IsA("BasePart") or obj:IsA("Model") then
                 AddHighlight(obj, Color3.fromRGB(255, 0, 0))
             end
@@ -226,33 +486,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-local function WatchFolder(folder)
-    if not folder then return end
-    folder.ChildRemoved:Connect(function(child)
-        RemoveHighlight(child)
-        for _, desc in ipairs(child:GetDescendants()) do
-            RemoveHighlight(desc)
-        end
-        for key, obj in pairs(ESPObjects) do
-            if string.find(key, child.Name) then
-                obj.Visible = false
-                obj:Remove()
-                ESPObjects[key] = nil
-            end
-        end
-    end)
-end
-
-task.spawn(function()
-    local pf = workspace:WaitForChild("PLAYERS", 30)
-    if pf then
-        WatchFolder(pf:FindFirstChild("ALIVE"))
-        WatchFolder(pf:FindFirstChild("KILLER"))
-        pf.ChildAdded:Connect(function(c)
-            WatchFolder(c)
-        end)
-    end
-end)
+-- === INFINITE SPRINT ===
 
 maintab:Toggle("Infinite Sprint", "Allows You To Sprint Forever.", function(state)
     infiniteSprint = state
@@ -261,32 +495,58 @@ maintab:Toggle("Infinite Sprint", "Allows You To Sprint Forever.", function(stat
         if sprintConn then sprintConn:Disconnect() end
         sprintConn = RunService.Heartbeat:Connect(function()
             if not infiniteSprint then return end
-            local char = LocalPlayer.Character
-            if not char then return end
+            pcall(function()
+                local playersFolder = workspace:FindFirstChild("PLAYERS")
+                if not playersFolder then return end
 
-            if isMobile then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.MoveDirection.Magnitude > 0 then
-                    char:SetAttribute("WalkSpeed", 24)
-                else
-                    char:SetAttribute("WalkSpeed", 12)
+                local char = nil
+                local aliveFolder = playersFolder:FindFirstChild("ALIVE")
+                if aliveFolder then
+                    char = aliveFolder:FindFirstChild(LocalPlayer.Name)
                 end
-            else
-                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
-                    char:SetAttribute("WalkSpeed", 25)
-                else
-                    char:SetAttribute("WalkSpeed", 12)
+                if not char then
+                    local killerFolder = playersFolder:FindFirstChild("KILLER")
+                    if killerFolder then
+                        char = killerFolder:FindFirstChild(LocalPlayer.Name)
+                    end
                 end
-            end
+                if not char then return end
+
+                if isMobile then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.MoveDirection.Magnitude > 0 then
+                        char:SetAttribute("WalkSpeed", 25)
+                    else
+                        char:SetAttribute("WalkSpeed", 12)
+                    end
+                else
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+                        char:SetAttribute("WalkSpeed", 25)
+                    else
+                        char:SetAttribute("WalkSpeed", 12)
+                    end
+                end
+            end)
         end)
     else
         if sprintConn then
             sprintConn:Disconnect()
             sprintConn = nil
         end
-        local char = LocalPlayer.Character
-        if char then
-            char:SetAttribute("WalkSpeed", 12)
-        end
+        pcall(function()
+            local playersFolder = workspace:FindFirstChild("PLAYERS")
+            if playersFolder then
+                local aliveFolder = playersFolder:FindFirstChild("ALIVE")
+                if aliveFolder then
+                    local char = aliveFolder:FindFirstChild(LocalPlayer.Name)
+                    if char then char:SetAttribute("WalkSpeed", 12) end
+                end
+                local killerFolder = playersFolder:FindFirstChild("KILLER")
+                if killerFolder then
+                    local char = killerFolder:FindFirstChild(LocalPlayer.Name)
+                    if char then char:SetAttribute("WalkSpeed", 12) end
+                end
+            end
+        end)
     end
 end)
